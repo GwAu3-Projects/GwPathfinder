@@ -458,13 +458,37 @@ namespace Pathfinder {
                         continue;
                     }
 
-                    // Skip neighbors that are inside obstacle zones
                     const Vec2f& neighbor_pos = map_data.points[neighbor_id].pos;
+
+                    // Skip neighbors that are inside obstacle zones
                     if (IsPointBlocked(neighbor_pos, obstacles)) {
                         continue;
                     }
 
-                    float new_cost = cost_so_far[current_id] + edge.distance;
+                    // Skip edges that pass through obstacles
+                    if (IsEdgeBlocked(current_pos, neighbor_pos, obstacles)) {
+                        continue;
+                    }
+
+                    // Calculate cost with penalty for proximity to obstacles
+                    float base_cost = edge.distance;
+                    float proximity_penalty = 0.0f;
+
+                    // Add penalty for paths that are close to obstacles (prefer paths with more space)
+                    for (const auto& obstacle : obstacles) {
+                        // Check distance from edge midpoint to obstacle
+                        Vec2f midpoint((current_pos.x + neighbor_pos.x) / 2.0f,
+                                       (current_pos.y + neighbor_pos.y) / 2.0f);
+                        float dist_to_obstacle = midpoint.Distance(obstacle.center) - obstacle.radius;
+
+                        // Add penalty for paths within 300 units of an obstacle
+                        if (dist_to_obstacle < 300.0f && dist_to_obstacle > 0.0f) {
+                            // Higher penalty for closer paths
+                            proximity_penalty += (300.0f - dist_to_obstacle) * 0.5f;
+                        }
+                    }
+
+                    float new_cost = cost_so_far[current_id] + base_cost + proximity_penalty;
 
                     if (new_cost < cost_so_far[neighbor_id]) {
                         cost_so_far[neighbor_id] = new_cost;
@@ -621,6 +645,168 @@ namespace Pathfinder {
             }
         }
         return false;
+    }
+
+    bool PathfinderEngine::SegmentIntersectsCircle(
+        const Vec2f& from,
+        const Vec2f& to,
+        const Vec2f& center,
+        float radius
+    ) const {
+        // Vector from start to end of segment
+        Vec2f d = to - from;
+        // Vector from start to circle center
+        Vec2f f = from - center;
+
+        float a = d.x * d.x + d.y * d.y;
+        float b = 2.0f * (f.x * d.x + f.y * d.y);
+        float c = (f.x * f.x + f.y * f.y) - radius * radius;
+
+        float discriminant = b * b - 4.0f * a * c;
+
+        if (discriminant < 0) {
+            return false; // No intersection
+        }
+
+        discriminant = std::sqrt(discriminant);
+
+        // Check if intersection points are within the segment (t in [0, 1])
+        float t1 = (-b - discriminant) / (2.0f * a);
+        float t2 = (-b + discriminant) / (2.0f * a);
+
+        // If either intersection point is within the segment
+        if ((t1 >= 0.0f && t1 <= 1.0f) || (t2 >= 0.0f && t2 <= 1.0f)) {
+            return true;
+        }
+
+        // Also check if the segment is entirely inside the circle
+        if (t1 < 0.0f && t2 > 1.0f) {
+            return true;
+        }
+
+        return false;
+    }
+
+    bool PathfinderEngine::IsEdgeBlocked(
+        const Vec2f& from,
+        const Vec2f& to,
+        const std::vector<ObstacleZone>& obstacles
+    ) const {
+        for (const auto& obstacle : obstacles) {
+            if (SegmentIntersectsCircle(from, to, obstacle.center, obstacle.radius)) {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    bool PathfinderEngine::IsPointWalkable(
+        const MapData& map_data,
+        const Vec2f& point
+    ) const {
+        for (const auto& trap : map_data.trapezoids) {
+            if (trap.ContainsPoint(point)) {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    float PathfinderEngine::CalculateAvailableSpace(
+        const MapData& map_data,
+        const Vec2f& point,
+        const std::vector<ObstacleZone>& obstacles
+    ) const {
+        float min_distance = std::numeric_limits<float>::max();
+
+        // Distance to obstacles
+        for (const auto& obstacle : obstacles) {
+            float dist = point.Distance(obstacle.center) - obstacle.radius;
+            if (dist < min_distance) {
+                min_distance = dist;
+            }
+        }
+
+        // Distance to trapezoid edges (simplified: use distance to nearest edge)
+        // This is an approximation - we check distance to each edge of each trapezoid
+        for (const auto& trap : map_data.trapezoids) {
+            if (trap.ContainsPoint(point)) {
+                // Calculate distance to each edge
+                auto distToSegment = [](const Vec2f& p, const Vec2f& a, const Vec2f& b) -> float {
+                    Vec2f ab = b - a;
+                    Vec2f ap = p - a;
+                    float t = (ap.x * ab.x + ap.y * ab.y) / (ab.x * ab.x + ab.y * ab.y);
+                    t = std::max(0.0f, std::min(1.0f, t));
+                    Vec2f closest(a.x + t * ab.x, a.y + t * ab.y);
+                    return p.Distance(closest);
+                };
+
+                float d1 = distToSegment(point, trap.a, trap.b);
+                float d2 = distToSegment(point, trap.b, trap.c);
+                float d3 = distToSegment(point, trap.c, trap.d);
+                float d4 = distToSegment(point, trap.d, trap.a);
+
+                float edge_dist = std::min({d1, d2, d3, d4});
+                if (edge_dist < min_distance) {
+                    min_distance = edge_dist;
+                }
+            }
+        }
+
+        return min_distance;
+    }
+
+    std::vector<Vec2f> PathfinderEngine::FindBypassPoints(
+        const MapData& map_data,
+        const Vec2f& from,
+        const Vec2f& to,
+        const ObstacleZone& obstacle,
+        const std::vector<ObstacleZone>& all_obstacles
+    ) const {
+        std::vector<Vec2f> bypass_points;
+
+        // Direction vector from start to end
+        Vec2f dir = to - from;
+        float length = std::sqrt(dir.x * dir.x + dir.y * dir.y);
+        if (length < 0.001f) return bypass_points;
+
+        // Normalize direction
+        dir.x /= length;
+        dir.y /= length;
+
+        // Perpendicular vector (90 degrees)
+        Vec2f perp(-dir.y, dir.x);
+
+        // Calculate bypass distance (obstacle radius + margin)
+        float bypass_dist = obstacle.radius + 150.0f; // 150 units margin
+
+        // Two potential bypass points (left and right of obstacle)
+        Vec2f left_point(obstacle.center.x + perp.x * bypass_dist, obstacle.center.y + perp.y * bypass_dist);
+        Vec2f right_point(obstacle.center.x - perp.x * bypass_dist, obstacle.center.y - perp.y * bypass_dist);
+
+        // Check which points are walkable and not blocked
+        bool left_walkable = IsPointWalkable(map_data, left_point) && !IsPointBlocked(left_point, all_obstacles);
+        bool right_walkable = IsPointWalkable(map_data, right_point) && !IsPointBlocked(right_point, all_obstacles);
+
+        if (left_walkable && right_walkable) {
+            // Both are valid - choose the one with more space
+            float left_space = CalculateAvailableSpace(map_data, left_point, all_obstacles);
+            float right_space = CalculateAvailableSpace(map_data, right_point, all_obstacles);
+
+            if (left_space >= right_space) {
+                bypass_points.push_back(left_point);
+                bypass_points.push_back(right_point); // Fallback
+            } else {
+                bypass_points.push_back(right_point);
+                bypass_points.push_back(left_point); // Fallback
+            }
+        } else if (left_walkable) {
+            bypass_points.push_back(left_point);
+        } else if (right_walkable) {
+            bypass_points.push_back(right_point);
+        }
+
+        return bypass_points;
     }
 
     float PathfinderEngine::Heuristic(

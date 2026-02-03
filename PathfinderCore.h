@@ -292,6 +292,43 @@ namespace Pathfinder {
             const std::vector<ObstacleZone>& obstacles
         ) const;
 
+        // Check if an edge (segment) is blocked by any obstacle
+        bool IsEdgeBlocked(
+            const Vec2f& from,
+            const Vec2f& to,
+            const std::vector<ObstacleZone>& obstacles
+        ) const;
+
+        // Check if a segment intersects a circle
+        bool SegmentIntersectsCircle(
+            const Vec2f& from,
+            const Vec2f& to,
+            const Vec2f& center,
+            float radius
+        ) const;
+
+        // Find bypass points around an obstacle, staying within walkable areas
+        std::vector<Vec2f> FindBypassPoints(
+            const MapData& map_data,
+            const Vec2f& from,
+            const Vec2f& to,
+            const ObstacleZone& obstacle,
+            const std::vector<ObstacleZone>& all_obstacles
+        ) const;
+
+        // Calculate available space around a point (distance to nearest obstacle or non-walkable area)
+        float CalculateAvailableSpace(
+            const MapData& map_data,
+            const Vec2f& point,
+            const std::vector<ObstacleZone>& obstacles
+        ) const;
+
+        // Check if a point is inside any walkable trapezoid
+        bool IsPointWalkable(
+            const MapData& map_data,
+            const Vec2f& point
+        ) const;
+
         // Finds the closest point to a position
         int32_t FindClosestPoint(
             const MapData& map_data,
