@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>GW Pathfinding Viewer & Editor</title>
+    <title>GW Pathfinding Tester</title>
     <style>
         * {
             margin: 0;
@@ -376,11 +376,47 @@
             pointer-events: none;
             z-index: 1000;
         }
+        .dll-panel {
+            background: #1a3a2a;
+            border: 1px solid #27ae60;
+            border-radius: 4px;
+            padding: 10px;
+            margin-bottom: 10px;
+        }
+        .dll-panel.disconnected {
+            background: #3a1a1a;
+            border-color: #e74c3c;
+        }
+        .dll-status {
+            display: flex;
+            align-items: center;
+            gap: 8px;
+            margin-bottom: 8px;
+        }
+        .dll-status-dot {
+            width: 10px;
+            height: 10px;
+            border-radius: 50%;
+            background: #e74c3c;
+            flex-shrink: 0;
+        }
+        .dll-status-dot.connected {
+            background: #27ae60;
+        }
+        .comparison-results {
+            background: #333;
+            padding: 10px;
+            border-radius: 4px;
+            margin-top: 10px;
+            font-size: 12px;
+        }
+        .comparison-results .faster { color: #27ae60; font-weight: bold; }
+        .comparison-results .slower { color: #e74c3c; }
     </style>
 </head>
 <body>
     <div class="sidebar">
-        <h2>GW Pathfinding Editor</h2>
+        <h2>GW Pathfinding Tester</h2>
 
         <div class="control-group">
             <div style="display: flex; gap: 5px; align-items: center;">
@@ -522,6 +558,62 @@
             <div id="coordsContent" style="font-family: monospace; font-size: 11px; margin-top: 5px;"></div>
         </div>
 
+        <h3>Obstacles</h3>
+        <div class="control-group">
+            <button id="btnAddObstacle" class="secondary" disabled>Add Obstacle</button>
+            <button id="btnClearObstacles" class="secondary" disabled>Clear Obstacles</button>
+        </div>
+        <div class="slider-group" style="margin-top: 10px;">
+            <div class="slider-item">
+                <div class="slider-label">
+                    <span>Obstacle Radius</span>
+                    <span id="obstacleRadiusValue">300</span>
+                </div>
+                <input type="range" id="obstacleRadius" min="50" max="1500" value="300" step="50">
+            </div>
+        </div>
+        <div id="obstacleInfo" class="info-box" style="display: none; margin-top: 10px;">
+            <div><strong>Obstacles:</strong> <span id="obstacleCount">0</span></div>
+        </div>
+
+        <h3>DLL Pathfinding</h3>
+        <div id="dllPanel" class="dll-panel disconnected">
+            <div class="dll-status">
+                <div id="dllStatusDot" class="dll-status-dot"></div>
+                <span id="dllStatusText">Disconnected</span>
+            </div>
+            <button id="btnConnectDll" class="success" style="width: 100%; margin-bottom: 8px;">Connect to Server</button>
+            <div id="dllInfo" style="display: none;">
+                <div style="font-size: 12px; margin-bottom: 5px;">
+                    <strong>Version:</strong> <span id="dllVersionText">-</span>
+                </div>
+                <div style="font-size: 12px; margin-bottom: 8px;">
+                    <strong>Maps:</strong> <span id="dllMapCount">-</span>
+                </div>
+                <div class="checkbox-item" style="margin-bottom: 6px;">
+                    <input type="checkbox" id="dllModeToggle">
+                    <label for="dllModeToggle">Use DLL Pathfinding</label>
+                </div>
+                <div class="checkbox-item" style="margin-bottom: 8px;">
+                    <input type="checkbox" id="dllCompareMode">
+                    <label for="dllCompareMode">Compare JS vs DLL</label>
+                </div>
+                <button id="btnDllStats" class="secondary" style="width: 100%;" disabled>Get Map Stats (DLL)</button>
+            </div>
+        </div>
+        <div id="dllPathInfo" class="info-box" style="display: none; margin-top: 10px;">
+            <div><strong>DLL Path Cost:</strong> <span id="dllPathCost">-</span></div>
+            <div><strong>DLL Points:</strong> <span id="dllPathPoints">-</span></div>
+            <div><strong>DLL Time:</strong> <span id="dllPathTime">-</span></div>
+        </div>
+        <div id="comparisonInfo" class="comparison-results" style="display: none;">
+            <strong>Comparison:</strong>
+            <div>JS: <span id="cmpJsTime">-</span> | DLL: <span id="cmpDllTime">-</span></div>
+            <div>JS pts: <span id="cmpJsPoints">-</span> | DLL pts: <span id="cmpDllPoints">-</span></div>
+            <div>JS cost: <span id="cmpJsCost">-</span> | DLL cost: <span id="cmpDllCost">-</span></div>
+            <div id="cmpVerdict"></div>
+        </div>
+
         <h3>Element Sizes</h3>
         <div class="slider-group">
             <div class="slider-item">
@@ -644,6 +736,22 @@
             simplifiedPath: null,
             pathSpacing: 1000,
             clearanceWeight: 100,
+
+            // Obstacles
+            obstacles: [],
+            isPlacingObstacle: false,
+            obstacleRadius: 300,
+
+            // DLL Server state
+            dllMode: false,
+            dllConnected: false,
+            dllVersion: null,
+            dllMaps: [],
+            dllPath: null,
+            dllComputeTime: 0,
+            dllMapUploaded: false,
+            rawJsonText: null,
+            serverUrl: 'http://localhost:8080',
 
             // Portal exit picking
             isPickingExitPosition: false,
@@ -921,11 +1029,14 @@
             const reader = new FileReader();
             reader.onload = function(event) {
                 try {
+                    state.rawJsonText = event.target.result;
+                    state.dllMapUploaded = false;
                     state.data = JSON.parse(event.target.result);
                     loadMapData();
                     state.hasUnsavedChanges = false;
                     updateSaveButton();
                     updateNavigationButtons();
+                    uploadMapToDllIfConnected();
                 } catch (error) {
                     alert('Error parsing JSON: ' + error.message);
                 }
@@ -1004,11 +1115,14 @@
                 state.currentFileHandle = fileHandle;
 
                 const content = await file.text();
+                state.rawJsonText = content;
+                state.dllMapUploaded = false;
                 state.data = JSON.parse(content);
                 loadMapData();
                 state.hasUnsavedChanges = false;
                 updateSaveButton();
                 showStatus('Loaded: ' + file.name, 'success');
+                uploadMapToDllIfConnected();
             } catch (error) {
                 alert('Error loading file: ' + error.message);
             }
@@ -1405,6 +1519,8 @@
             document.getElementById('btnDelete').disabled = false;
             document.getElementById('btnTestPath').disabled = false;
             document.getElementById('btnClearPath').disabled = false;
+            document.getElementById('btnAddObstacle').disabled = false;
+            document.getElementById('btnClearObstacles').disabled = false;
             document.getElementById('btnManageMapIds').disabled = false;
 
             calculateBounds();
@@ -1555,6 +1671,9 @@
             if (state.isPlacing && state.tempStart) {
                 drawTempElement();
             }
+
+            // Draw obstacles (before path so path is drawn on top)
+            drawObstacles();
 
             // Draw pathfinding test
             if (state.isTestingPath) {
@@ -2006,6 +2125,17 @@
 
         // Mouse handling
         function handleMouseDown(e) {
+            // Obstacle placement: right-click removes obstacle instead of panning
+            if (state.isPlacingObstacle && e.button === 2) {
+                e.preventDefault();
+                const rect = state.canvas.getBoundingClientRect();
+                const screenX = e.clientX - rect.left;
+                const screenY = e.clientY - rect.top;
+                const worldPos = screenToWorld(screenX, screenY);
+                handleObstacleClick(worldPos, 2);
+                return;
+            }
+
             if (e.button === 2 || e.button === 1) {
                 state.isDragging = true;
                 state.lastX = e.clientX;
@@ -2038,7 +2168,9 @@
                     return;
                 }
 
-                if (state.isPickingExitPosition) {
+                if (state.isPlacingObstacle) {
+                    handleObstacleClick(worldPos, 0);
+                } else if (state.isPickingExitPosition) {
                     handleExitPositionPick(worldPos);
                 } else if (state.isTestingPath) {
                     handlePathTestClick(worldPos);
@@ -2088,6 +2220,11 @@
             }
 
             if (state.isPlacing && state.tempStart) {
+                draw();
+            }
+
+            // Redraw for obstacle ghost preview
+            if (state.isPlacingObstacle) {
                 draw();
             }
         }
@@ -3116,6 +3253,15 @@
         document.getElementById('btnTestPath').addEventListener('click', startPathTest);
         document.getElementById('btnClearPath').addEventListener('click', clearPathTest);
 
+        // Obstacles
+        document.getElementById('btnAddObstacle').addEventListener('click', toggleObstaclePlacement);
+        document.getElementById('btnClearObstacles').addEventListener('click', clearObstacles);
+        document.getElementById('obstacleRadius').addEventListener('input', (e) => {
+            state.obstacleRadius = parseFloat(e.target.value);
+            document.getElementById('obstacleRadiusValue').textContent = e.target.value;
+            draw();
+        });
+
         // Map info editor
         document.getElementById('btnEditMapInfo').addEventListener('click', showEditMapInfo);
 
@@ -3242,8 +3388,13 @@
             state.computedPath = null;
             state.simplifiedPath = null;
 
-            // Disable edit actions while testing path
+            // Disable edit actions and obstacle placement while testing path
             state.editAction = null;
+            if (state.isPlacingObstacle) {
+                state.isPlacingObstacle = false;
+                document.getElementById('btnAddObstacle').textContent = 'Add Obstacle';
+                document.getElementById('btnAddObstacle').style.background = '';
+            }
             updateModeIndicator();
 
             showStatus('Click to set start position', 'info');
@@ -3257,11 +3408,83 @@
             state.pathTestGoal = null;
             state.computedPath = null;
             state.simplifiedPath = null;
+            state.dllPath = null;
             document.getElementById('pathTestInfo').style.display = 'none';
             document.getElementById('pathCoordsList').style.display = 'none';
+            document.getElementById('dllPathInfo').style.display = 'none';
+            document.getElementById('comparisonInfo').style.display = 'none';
             showStatus('Path test cleared', 'success');
             if (state.is3D) build3DPath();
             draw();
+        }
+
+        function toggleObstaclePlacement() {
+            if (!state.data) return;
+            state.isPlacingObstacle = !state.isPlacingObstacle;
+            const btn = document.getElementById('btnAddObstacle');
+            if (state.isPlacingObstacle) {
+                // Disable other modes
+                state.editAction = null;
+                state.isTestingPath = false;
+                btn.textContent = 'Stop Placing';
+                btn.style.background = '#e74c3c';
+                showStatus('Click on the map to place an obstacle. Right-click to remove one.', 'info');
+            } else {
+                btn.textContent = 'Add Obstacle';
+                btn.style.background = '';
+                showStatus('Obstacle placement disabled', 'success');
+            }
+            updateModeIndicator();
+            draw();
+        }
+
+        function clearObstacles() {
+            state.obstacles = [];
+            updateObstacleInfo();
+            showStatus('All obstacles cleared', 'success');
+            draw();
+        }
+
+        function updateObstacleInfo() {
+            const infoDiv = document.getElementById('obstacleInfo');
+            if (state.obstacles.length > 0) {
+                infoDiv.style.display = 'block';
+                document.getElementById('obstacleCount').textContent = state.obstacles.length;
+            } else {
+                infoDiv.style.display = 'none';
+            }
+        }
+
+        function handleObstacleClick(worldPos, button) {
+            if (button === 0) {
+                // Left click: add obstacle
+                state.obstacles.push({
+                    x: worldPos.x,
+                    y: worldPos.y,
+                    radius: state.obstacleRadius
+                });
+                updateObstacleInfo();
+                draw();
+            } else if (button === 2) {
+                // Right click: remove closest obstacle within click range
+                let closestIdx = -1;
+                let closestDist = Infinity;
+                for (let i = 0; i < state.obstacles.length; i++) {
+                    const obs = state.obstacles[i];
+                    const dx = obs.x - worldPos.x;
+                    const dy = obs.y - worldPos.y;
+                    const dist = Math.sqrt(dx * dx + dy * dy);
+                    if (dist < obs.radius && dist < closestDist) {
+                        closestDist = dist;
+                        closestIdx = i;
+                    }
+                }
+                if (closestIdx >= 0) {
+                    state.obstacles.splice(closestIdx, 1);
+                    updateObstacleInfo();
+                    draw();
+                }
+            }
         }
 
         function showEditMapInfo() {
@@ -3491,58 +3714,108 @@
             if (!state.pathTestStart || !state.pathTestGoal) return;
 
             // Show loading status
-            showStatus('Computing path... This may take a few seconds for large maps.', 'info');
+            showStatus('Computing path...', 'info');
             document.getElementById('pathTestInfo').style.display = 'none';
             document.getElementById('pathCoordsList').style.display = 'none';
+            document.getElementById('dllPathInfo').style.display = 'none';
+            document.getElementById('comparisonInfo').style.display = 'none';
+
+            const compareMode = document.getElementById('dllCompareMode') && document.getElementById('dllCompareMode').checked;
+            const dllOnly = state.dllMode && !compareMode;
 
             // Use setTimeout to allow UI to update before heavy computation
-            setTimeout(() => {
-                const startTime = performance.now();
+            setTimeout(async () => {
+                let jsResult = null;
+                let dllResult = null;
 
-                try {
-                    console.log('Starting A* search with', state.data.points.length, 'points');
-                    const path = aStarSearch(state.pathTestStart, state.pathTestGoal);
-                    const endTime = performance.now();
+                // JS pathfinding (run unless dllOnly mode)
+                if (!dllOnly) {
+                    const startTime = performance.now();
+                    try {
+                        console.log('Starting JS A* search with', state.data.points.length, 'points');
+                        const path = aStarSearch(state.pathTestStart, state.pathTestGoal);
+                        const endTime = performance.now();
 
-                    if (path && path.length > 0) {
-                        state.computedPath = path;
-                        state.simplifiedPath = simplifyPath(path, state.pathSpacing);
+                        if (path && path.length > 0) {
+                            state.computedPath = path;
+                            state.simplifiedPath = simplifyPath(path, state.pathSpacing);
 
-                        // Calculate total cost
-                        let totalCost = 0;
-                        for (let i = 1; i < path.length; i++) {
-                            const dx = path[i].x - path[i-1].x;
-                            const dy = path[i].y - path[i-1].y;
-                            totalCost += Math.sqrt(dx * dx + dy * dy);
+                            let totalCost = 0;
+                            for (let i = 1; i < path.length; i++) {
+                                const dx = path[i].x - path[i-1].x;
+                                const dy = path[i].y - path[i-1].y;
+                                totalCost += Math.sqrt(dx * dx + dy * dy);
+                            }
+
+                            jsResult = {
+                                path: path,
+                                simplified: state.simplifiedPath,
+                                cost: totalCost,
+                                time: endTime - startTime
+                            };
+
+                            document.getElementById('pathTestInfo').style.display = 'block';
+                            document.getElementById('pathCost').textContent = totalCost.toFixed(2);
+                            document.getElementById('pathRawPoints').textContent = path.length;
+                            document.getElementById('pathPoints').textContent = state.simplifiedPath.length;
+                            document.getElementById('pathTime').textContent = (endTime - startTime).toFixed(2) + ' ms';
+                            updatePathInfo();
+
+                            showStatus(`Path found with ${path.length} points (${state.simplifiedPath.length} simplified) in ${(endTime - startTime).toFixed(0)}ms!`, 'success');
                         }
-
-                        // Display info
-                        document.getElementById('pathTestInfo').style.display = 'block';
-                        document.getElementById('pathCost').textContent = totalCost.toFixed(2);
-                        document.getElementById('pathRawPoints').textContent = path.length;
-                        document.getElementById('pathPoints').textContent = state.simplifiedPath.length;
-                        document.getElementById('pathTime').textContent = (endTime - startTime).toFixed(2) + ' ms';
-
-                        updatePathInfo();
-
-                        showStatus(`Path found with ${path.length} points (${state.simplifiedPath.length} simplified) in ${(endTime - startTime).toFixed(0)}ms!`, 'success');
-                        console.log('Path computation completed in', (endTime - startTime).toFixed(2), 'ms');
-                    } else {
-                        showStatus('No path found!', 'error');
-                        console.error('A* search returned null or empty path');
-                        document.getElementById('pathTestInfo').style.display = 'none';
-                        document.getElementById('pathCoordsList').style.display = 'none';
+                    } catch (error) {
+                        if (!state.dllMode) {
+                            showStatus('JS Error: ' + error.message, 'error');
+                        }
+                        console.error('JS path computation error:', error);
                     }
-                } catch (error) {
-                    showStatus('Error computing path: ' + error.message, 'error');
-                    console.error('Path computation error:', error);
-                    document.getElementById('pathTestInfo').style.display = 'none';
-                    document.getElementById('pathCoordsList').style.display = 'none';
+                }
+
+                // DLL pathfinding (run if dllMode or compareMode)
+                if (state.dllMode || compareMode) {
+                    dllResult = await findPathViaDll(state.pathTestStart, state.pathTestGoal);
+                    if (dllResult) {
+                        state.dllPath = dllResult.points;
+
+                        document.getElementById('dllPathInfo').style.display = 'block';
+                        document.getElementById('dllPathCost').textContent = dllResult.cost.toFixed(2);
+                        document.getElementById('dllPathPoints').textContent = dllResult.pointCount;
+                        document.getElementById('dllPathTime').textContent =
+                            dllResult.serverTime.toFixed(2) + ' ms (round-trip: ' +
+                            dllResult.roundTripTime.toFixed(0) + ' ms)';
+
+                        // If DLL-only mode, use DLL path as the main display path
+                        if (dllOnly) {
+                            state.computedPath = dllResult.points;
+                            state.simplifiedPath = dllResult.points;
+                            document.getElementById('pathTestInfo').style.display = 'block';
+                            document.getElementById('pathCost').textContent = dllResult.cost.toFixed(2);
+                            document.getElementById('pathRawPoints').textContent = dllResult.pointCount;
+                            document.getElementById('pathPoints').textContent = dllResult.pointCount;
+                            document.getElementById('pathTime').textContent =
+                                dllResult.serverTime.toFixed(2) + ' ms (DLL)';
+                            updatePathInfo();
+                        }
+                    }
+                }
+
+                // Show comparison if both results exist
+                if (compareMode && jsResult && dllResult) {
+                    showComparison(jsResult, dllResult);
+                }
+
+                if (!jsResult && !dllResult) {
+                    showStatus('No path found!', 'error');
+                } else if (!dllOnly && !compareMode) {
+                    // Already shown by JS path above
+                } else {
+                    const source = dllOnly ? 'DLL' : (compareMode && dllResult ? 'JS + DLL' : 'JS');
+                    showStatus('Path computed (' + source + ')', 'success');
                 }
 
                 if (state.is3D) build3DPath();
                 draw();
-            }, 50); // 50ms delay to allow UI to update
+            }, 50);
         }
 
         function rerunPathfinding() {
@@ -3564,6 +3837,27 @@
 
             coordsDiv.innerHTML = html;
             document.getElementById('pathCoordsList').style.display = 'block';
+        }
+
+        // Check if a line segment (x1,y1)-(x2,y2) intersects a circle (cx,cy,r)
+        function segmentIntersectsCircle(x1, y1, x2, y2, cx, cy, r) {
+            const dx = x2 - x1;
+            const dy = y2 - y1;
+            const fx = x1 - cx;
+            const fy = y1 - cy;
+            const lenSq = dx * dx + dy * dy;
+            if (lenSq === 0) {
+                return (fx * fx + fy * fy) <= r * r;
+            }
+            // Project circle center onto line, clamp to segment
+            let t = -(fx * dx + fy * dy) / lenSq;
+            if (t < 0) t = 0;
+            if (t > 1) t = 1;
+            const closestX = x1 + t * dx;
+            const closestY = y1 + t * dy;
+            const distX = closestX - cx;
+            const distY = closestY - cy;
+            return (distX * distX + distY * distY) <= r * r;
         }
 
         function aStarSearch(startPos, goalPos) {
@@ -3643,6 +3937,25 @@
                         const destClearance = state.data.points[pointId][5] || 0;
                         edgeCost *= (1.0 + (state.clearanceWeight / 10) / Math.max(destClearance, 1.0));
                     }
+
+                    // Obstacle avoidance: heavy penalty if edge crosses an obstacle
+                    if (state.obstacles.length > 0) {
+                        const curPt = current < state.data.points.length
+                            ? state.data.points[current]
+                            : (current === startId ? state.data.points[startId] : state.data.points[goalId]);
+                        const nbrPt = pointId < state.data.points.length
+                            ? state.data.points[pointId]
+                            : (pointId === startId ? state.data.points[startId] : state.data.points[goalId]);
+                        const cx = curPt[1], cy = curPt[2];
+                        const nx = nbrPt[1], ny = nbrPt[2];
+                        for (const obs of state.obstacles) {
+                            if (segmentIntersectsCircle(cx, cy, nx, ny, obs.x, obs.y, obs.radius)) {
+                                edgeCost += distance * 50;
+                                break;
+                            }
+                        }
+                    }
+
                     const newCost = costSoFar[current] + edgeCost;
                     if (newCost < costSoFar[pointId]) {
                         costSoFar[pointId] = newCost;
@@ -3992,6 +4305,65 @@
             }
         }
 
+        function drawObstacles() {
+            const ctx = state.ctx;
+
+            // Draw placed obstacles
+            for (let i = 0; i < state.obstacles.length; i++) {
+                const obs = state.obstacles[i];
+                const pos = worldToScreen(obs.x, obs.y);
+
+                // Calculate screen radius from world radius
+                const edgePos = worldToScreen(obs.x + obs.radius, obs.y);
+                const screenRadius = Math.abs(edgePos.x - pos.x);
+
+                // Fill
+                ctx.fillStyle = 'rgba(255, 50, 50, 0.2)';
+                ctx.beginPath();
+                ctx.arc(pos.x, pos.y, screenRadius, 0, Math.PI * 2);
+                ctx.fill();
+
+                // Border
+                ctx.strokeStyle = 'rgba(255, 50, 50, 0.8)';
+                ctx.lineWidth = 2;
+                ctx.setLineDash([]);
+                ctx.beginPath();
+                ctx.arc(pos.x, pos.y, screenRadius, 0, Math.PI * 2);
+                ctx.stroke();
+
+                // Center dot
+                ctx.fillStyle = '#ff3232';
+                ctx.beginPath();
+                ctx.arc(pos.x, pos.y, 3, 0, Math.PI * 2);
+                ctx.fill();
+
+                // Label
+                ctx.fillStyle = '#ff6666';
+                ctx.font = '10px monospace';
+                ctx.fillText('r=' + obs.radius, pos.x + 5, pos.y - screenRadius - 5);
+            }
+
+            // Ghost preview during placement
+            if (state.isPlacingObstacle && state.lastMouseWorld) {
+                const pos = worldToScreen(state.lastMouseWorld.x, state.lastMouseWorld.y);
+                const edgePos = worldToScreen(state.lastMouseWorld.x + state.obstacleRadius, state.lastMouseWorld.y);
+                const screenRadius = Math.abs(edgePos.x - pos.x);
+
+                ctx.fillStyle = 'rgba(255, 50, 50, 0.1)';
+                ctx.beginPath();
+                ctx.arc(pos.x, pos.y, screenRadius, 0, Math.PI * 2);
+                ctx.fill();
+
+                ctx.strokeStyle = 'rgba(255, 50, 50, 0.5)';
+                ctx.lineWidth = 1;
+                ctx.setLineDash([5, 5]);
+                ctx.beginPath();
+                ctx.arc(pos.x, pos.y, screenRadius, 0, Math.PI * 2);
+                ctx.stroke();
+                ctx.setLineDash([]);
+            }
+        }
+
         function drawPathTest() {
             const ctx = state.ctx;
 
@@ -4082,6 +4454,36 @@
                     ctx.font = 'bold 10px Arial';
                     ctx.fillText(i.toString(), pos.x + 10, pos.y - 10);
                     ctx.fillStyle = '#00ffff';
+                }
+            }
+
+            // Draw DLL path (orange, dashed — distinct from JS cyan path)
+            if (state.dllPath && state.dllPath.length > 1) {
+                ctx.strokeStyle = '#ffa500';
+                ctx.lineWidth = 3;
+                ctx.setLineDash([8, 4]);
+
+                ctx.beginPath();
+                const firstDll = worldToScreen(state.dllPath[0].x, state.dllPath[0].y);
+                ctx.moveTo(firstDll.x, firstDll.y);
+
+                for (let i = 1; i < state.dllPath.length; i++) {
+                    const pos = worldToScreen(state.dllPath[i].x, state.dllPath[i].y);
+                    ctx.lineTo(pos.x, pos.y);
+                }
+                ctx.stroke();
+                ctx.setLineDash([]);
+
+                // Draw DLL path points
+                ctx.fillStyle = '#ffa500';
+                ctx.strokeStyle = '#ffffff';
+                ctx.lineWidth = 1;
+                for (let i = 0; i < state.dllPath.length; i++) {
+                    const pos = worldToScreen(state.dllPath[i].x, state.dllPath[i].y);
+                    ctx.beginPath();
+                    ctx.arc(pos.x, pos.y, 4, 0, Math.PI * 2);
+                    ctx.fill();
+                    ctx.stroke();
                 }
             }
         }
@@ -4680,6 +5082,195 @@
                 }
             }
         }
+
+        // ========== DLL Server Communication ==========
+
+        async function connectToServer() {
+            try {
+                const response = await fetch(state.serverUrl + '/api/version');
+                if (!response.ok) throw new Error('Server returned ' + response.status);
+                const data = await response.json();
+                state.dllVersion = data.version;
+                state.dllConnected = true;
+                document.getElementById('dllVersionText').textContent = data.version;
+
+                const mapsResponse = await fetch(state.serverUrl + '/api/maps');
+                const mapsData = await mapsResponse.json();
+                state.dllMaps = mapsData.maps;
+                document.getElementById('dllMapCount').textContent = mapsData.count;
+
+                updateDllStatus(true);
+                document.getElementById('btnDllStats').disabled = false;
+                showStatus('Connected to DLL server: ' + data.version, 'success');
+
+                // Upload current map data if available
+                await uploadMapToDllIfConnected();
+            } catch (error) {
+                state.dllConnected = false;
+                updateDllStatus(false);
+                showStatus('Failed to connect: ' + error.message, 'error');
+            }
+        }
+
+        function updateDllStatus(connected) {
+            const panel = document.getElementById('dllPanel');
+            const dot = document.getElementById('dllStatusDot');
+            const text = document.getElementById('dllStatusText');
+            const info = document.getElementById('dllInfo');
+
+            if (connected) {
+                panel.className = 'dll-panel';
+                dot.className = 'dll-status-dot connected';
+                text.textContent = 'Connected';
+                info.style.display = 'block';
+            } else {
+                panel.className = 'dll-panel disconnected';
+                dot.className = 'dll-status-dot';
+                text.textContent = 'Disconnected';
+                info.style.display = 'none';
+            }
+        }
+
+        async function findPathViaDll(startPos, goalPos) {
+            if (!state.dllConnected) {
+                showStatus('DLL server not connected', 'error');
+                return null;
+            }
+
+            const mapId = getCurrentMapId();
+            if (!mapId || mapId === 0) {
+                showStatus('Cannot use DLL: map ID not detected from filename', 'error');
+                return null;
+            }
+
+            const body = {
+                map_id: mapId,
+                start_x: startPos.x,
+                start_y: startPos.y,
+                start_layer: -1,
+                dest_x: goalPos.x,
+                dest_y: goalPos.y,
+                obstacles: state.obstacles.map(o => ({ x: o.x, y: o.y, radius: o.radius })),
+                range: state.pathSpacing,
+                clearance_weight: state.clearanceWeight || 0
+            };
+
+            try {
+                const t0 = performance.now();
+                const response = await fetch(state.serverUrl + '/api/findpath', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify(body)
+                });
+                const data = await response.json();
+                const t1 = performance.now();
+
+                if (data.error_code === 0 && data.points && data.points.length > 0) {
+                    return {
+                        points: data.points.map(p => ({ x: p.x, y: p.y, layer: p.layer })),
+                        cost: data.total_cost,
+                        pointCount: data.point_count,
+                        serverTime: data.computation_time_ms,
+                        roundTripTime: t1 - t0
+                    };
+                } else {
+                    showStatus('DLL: ' + (data.error_message || 'No path found'), 'error');
+                    return null;
+                }
+            } catch (error) {
+                showStatus('DLL request failed: ' + error.message, 'error');
+                return null;
+            }
+        }
+
+        async function getDllMapStats() {
+            if (!state.dllConnected) return;
+            const mapId = getCurrentMapId();
+            if (!mapId) {
+                showStatus('No map ID detected from filename', 'error');
+                return;
+            }
+
+            try {
+                const response = await fetch(state.serverUrl + '/api/maps/' + mapId + '/stats');
+                const data = await response.json();
+                if (data.error_code === 0) {
+                    const msg = 'DLL Stats for map ' + mapId + ': ' +
+                        data.trapezoid_count + ' traps, ' + data.point_count + ' points, ' +
+                        data.teleport_count + ' teleports, ' + data.travel_portal_count + ' portals, ' +
+                        data.npc_travel_count + ' npc, ' + data.enter_travel_count + ' enter';
+                    showStatus(msg, 'success');
+                } else {
+                    showStatus('DLL Stats error: ' + (data.error_message || 'Unknown error'), 'error');
+                }
+            } catch (error) {
+                showStatus('DLL Stats request failed: ' + error.message, 'error');
+            }
+        }
+
+        function showComparison(jsResult, dllResult) {
+            document.getElementById('comparisonInfo').style.display = 'block';
+            document.getElementById('cmpJsTime').textContent = jsResult.time.toFixed(2) + ' ms';
+            document.getElementById('cmpDllTime').textContent = dllResult.serverTime.toFixed(2) + ' ms';
+            document.getElementById('cmpJsPoints').textContent = jsResult.simplified.length;
+            document.getElementById('cmpDllPoints').textContent = dllResult.pointCount;
+            document.getElementById('cmpJsCost').textContent = jsResult.cost.toFixed(2);
+            document.getElementById('cmpDllCost').textContent = dllResult.cost.toFixed(2);
+
+            const verdict = document.getElementById('cmpVerdict');
+            if (dllResult.serverTime < jsResult.time) {
+                const ratio = (jsResult.time / dllResult.serverTime).toFixed(1);
+                verdict.innerHTML = '<span class="faster">DLL is ' + ratio + 'x faster</span>';
+            } else {
+                const ratio = (dllResult.serverTime / jsResult.time).toFixed(1);
+                verdict.innerHTML = '<span class="slower">JS is ' + ratio + 'x faster</span>';
+            }
+        }
+
+        async function uploadMapToDll() {
+            const mapId = getCurrentMapId();
+            if (!mapId || !state.rawJsonText) return false;
+
+            try {
+                showStatus('Uploading map ' + mapId + ' to DLL server...', 'info');
+                const response = await fetch(state.serverUrl + '/api/maps/' + mapId + '/load', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: state.rawJsonText
+                });
+                const data = await response.json();
+                if (data.success) {
+                    state.dllMapUploaded = true;
+                    const sizeMB = (data.json_size / (1024 * 1024)).toFixed(1);
+                    showStatus('Map ' + mapId + ' uploaded to DLL (' + sizeMB + ' MB, ' + data.load_time_ms.toFixed(0) + 'ms)', 'success');
+                    return true;
+                } else {
+                    showStatus('DLL upload failed: ' + (data.error || 'Unknown error'), 'error');
+                    return false;
+                }
+            } catch (error) {
+                showStatus('DLL upload failed: ' + error.message, 'error');
+                return false;
+            }
+        }
+
+        async function uploadMapToDllIfConnected() {
+            if (state.dllConnected && state.rawJsonText && !state.dllMapUploaded) {
+                await uploadMapToDll();
+            }
+        }
+
+        // DLL event listeners
+        document.getElementById('btnConnectDll').addEventListener('click', connectToServer);
+        document.getElementById('dllModeToggle').addEventListener('change', (e) => {
+            state.dllMode = e.target.checked;
+            if (state.dllMode && !state.dllConnected) {
+                showStatus('Connect to DLL server first', 'error');
+                e.target.checked = false;
+                state.dllMode = false;
+            }
+        });
+        document.getElementById('btnDllStats').addEventListener('click', getDllMapStats);
 
     </script>
 </body>

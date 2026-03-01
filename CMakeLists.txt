@@ -9,19 +9,19 @@ set(CMAKE_MSVC_RUNTIME_LIBRARY "MultiThreaded$<$<CONFIG:Debug>:Debug>")
 set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 
-# Sources de la DLL (nouveau système avec archive ZIP)
+# Sources de la DLL
 set(PATHFINDER_SOURCES
-    PathfinderAPI.cpp
-    PathfinderCore.cpp
-    MapDataRegistry.cpp
-    MapArchiveLoader.cpp
+    src/PathfinderAPI.cpp
+    src/PathfinderCore.cpp
+    src/MapDataRegistry.cpp
+    src/MapArchiveLoader.cpp
 )
 
 set(PATHFINDER_HEADERS
-    PathfinderAPI.h
-    PathfinderCore.h
-    MapDataRegistry.h
-    MapArchiveLoader.h
+    include/PathfinderAPI.h
+    include/PathfinderCore.h
+    include/MapDataRegistry.h
+    include/MapArchiveLoader.h
 )
 
 # Créer la DLL
@@ -30,16 +30,19 @@ add_library(GWPathfinder SHARED
     ${PATHFINDER_HEADERS}
 )
 
+# Ajouter le dossier include pour les headers
+target_include_directories(GWPathfinder PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/include)
+
 # Définir le symbole d'export
 target_compile_definitions(GWPathfinder PRIVATE PATHFINDER_EXPORTS)
 
 # Trouver et lier les dépendances
 find_package(nlohmann_json CONFIG REQUIRED)
-find_package(libzip CONFIG REQUIRED)
+find_package(LibArchive REQUIRED)
 
 target_link_libraries(GWPathfinder PRIVATE
     nlohmann_json::nlohmann_json
-    libzip::zip
+    LibArchive::LibArchive
 )
 
 # Lier shlwapi.lib pour PathRemoveFileSpec (Windows)
@@ -89,18 +92,55 @@ install(TARGETS GWPathfinder
 )
 
 # Installer les headers (pour les utilisateurs C++)
-install(FILES PathfinderAPI.h
+install(FILES include/PathfinderAPI.h
     DESTINATION include/GWPathfinder
 )
 
-# Copier maps.zip dans le dossier de sortie après compilation
-add_custom_command(TARGET GWPathfinder POST_BUILD
-    COMMAND ${CMAKE_COMMAND} -E echo "Checking for maps.zip..."
+# ========================================
+# TestServer executable
+# ========================================
+add_executable(TestServer src/TestServer.cpp)
+
+# TestServer needs include/ for headers (PathfinderAPI.h, httplib.h)
+target_include_directories(TestServer PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/include)
+
+# JSON parsing (reuse existing dependency)
+target_link_libraries(TestServer PRIVATE nlohmann_json::nlohmann_json)
+
+# Windows: WinSock2 for httplib, shlwapi for PathRemoveFileSpec
+if(WIN32)
+    target_link_libraries(TestServer PRIVATE ws2_32 shlwapi)
+endif()
+
+if(MSVC)
+    target_compile_options(TestServer PRIVATE
+        /W4 /WX- /permissive- /MP
+        $<$<CONFIG:Release>:/O2>
+        $<$<CONFIG:Release>:/Oi>
+    )
+    target_link_options(TestServer PRIVATE
+        /LARGEADDRESSAWARE
+        /INCREMENTAL:NO
+    )
+endif()
+
+# Copy Tester.html to output directory
+add_custom_command(TARGET TestServer POST_BUILD
     COMMAND ${CMAKE_COMMAND} -E copy_if_different
-        ${CMAKE_CURRENT_SOURCE_DIR}/maps.zip
-        $<TARGET_FILE_DIR:GWPathfinder>/maps.zip
-    COMMENT "Copying maps.zip to output directory"
+        ${CMAKE_CURRENT_SOURCE_DIR}/Tester.html
+        $<TARGET_FILE_DIR:TestServer>/Tester.html
+    COMMENT "Copying Tester.html to output directory"
 )
+
+# Copier maps.rar dans le dossier de sortie après compilation (si présent)
+if(EXISTS ${CMAKE_CURRENT_SOURCE_DIR}/maps.rar)
+    add_custom_command(TARGET GWPathfinder POST_BUILD
+        COMMAND ${CMAKE_COMMAND} -E copy_if_different
+            ${CMAKE_CURRENT_SOURCE_DIR}/maps.rar
+            $<TARGET_FILE_DIR:GWPathfinder>/maps.rar
+        COMMENT "Copying maps.rar to output directory"
+    )
+endif()
 
 # Générer un fichier .def pour les exports (optionnel)
 if(MSVC)
@@ -111,14 +151,11 @@ endif()
 
 # Information de build
 message(STATUS "========================================")
-message(STATUS "GWPathfinder Configuration (ZIP Archive System)")
+message(STATUS "GWPathfinder Configuration")
 message(STATUS "========================================")
 message(STATUS "  Version: ${PROJECT_VERSION}")
 message(STATUS "  C++ Standard: ${CMAKE_CXX_STANDARD}")
 message(STATUS "  Build Type: ${CMAKE_BUILD_TYPE}")
-message(STATUS "  Archive Loading: ENABLED")
-message(STATUS "  Source files: ${PATHFINDER_SOURCES}")
-message(STATUS "========================================")
-message(STATUS "NOTE: Make sure maps.zip exists in this directory!")
-message(STATUS "      Run ConvertRarToZip.ps1 to create it from maps.rar")
+message(STATUS "  Sources: src/")
+message(STATUS "  Headers: include/")
 message(STATUS "========================================")

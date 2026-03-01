@@ -25,24 +25,8 @@ $VcpkgToolchain = Join-Path $VcpkgRoot "scripts\buildsystems\vcpkg.cmake"
 Write-Host "Configuration: $BuildType" -ForegroundColor Gray
 Write-Host ""
 
-# Step 1: Check maps.zip
-Write-Host "[1/4] Checking maps.zip..." -ForegroundColor Yellow
-if (-not (Test-Path "maps.zip")) {
-    if (Test-Path "maps") {
-        Write-Host "  Creating from maps/ folder..." -ForegroundColor Gray
-        Compress-Archive -Path "maps\*" -DestinationPath "maps.zip" -Force
-        Write-Host "  Created successfully" -ForegroundColor Green
-    } else {
-        Write-Host "  ERROR: maps/ and maps.zip are missing!" -ForegroundColor Red
-        exit 1
-    }
-} else {
-    Write-Host "  OK" -ForegroundColor Green
-}
-
-# Step 2: Check and install vcpkg dependencies
-Write-Host ""
-Write-Host "[2/4] vcpkg dependencies..." -ForegroundColor Yellow
+# Step 1: Check and install vcpkg dependencies
+Write-Host "[1/3] vcpkg dependencies..." -ForegroundColor Yellow
 
 if (-not (Test-Path $VcpkgExe)) {
     Write-Host "  ERROR: vcpkg not found in $VcpkgRoot" -ForegroundColor Red
@@ -62,9 +46,9 @@ if ($LASTEXITCODE -ne 0) {
 }
 Write-Host "  OK" -ForegroundColor Green
 
-# Step 3: CMake Configuration
+# Step 2: CMake Configuration
 Write-Host ""
-Write-Host "[3/4] CMake configuration..." -ForegroundColor Yellow
+Write-Host "[2/3] CMake configuration..." -ForegroundColor Yellow
 
 if ($Clean -and (Test-Path "build")) {
     Write-Host "  Cleaning..." -ForegroundColor Gray
@@ -92,9 +76,9 @@ if ($LASTEXITCODE -ne 0) {
 
 Write-Host "  OK" -ForegroundColor Green
 
-# Step 4: Build
+# Step 3: Build
 Write-Host ""
-Write-Host "[4/4] Building..." -ForegroundColor Yellow
+Write-Host "[3/3] Building..." -ForegroundColor Yellow
 
 cmake --build . --config $BuildType --parallel | Out-Host
 
@@ -117,21 +101,35 @@ Write-Host ""
 
 $DllPath = "build\$BuildType\GWPathfinder.dll"
 if (Test-Path $DllPath) {
-    # Copy maps.zip
-    Copy-Item "maps.zip" "build\$BuildType\maps.zip" -Force
-
-    # Display info
     $DllSize = (Get-Item $DllPath).Length / 1MB
-    $ZipSize = (Get-Item "build\$BuildType\maps.zip").Length / 1MB
 
     Write-Host "Created files:" -ForegroundColor Cyan
     Write-Host "  DLL: $DllPath ($([math]::Round($DllSize, 1)) MB)" -ForegroundColor Gray
-    Write-Host "  ZIP: build\$BuildType\maps.zip ($([math]::Round($ZipSize, 1)) MB)" -ForegroundColor Gray
 
-    Write-Host ""
-    Write-Host "To test:" -ForegroundColor Yellow
-    Write-Host "  cd build\$BuildType" -ForegroundColor Gray
-    Write-Host "  AutoIt3.exe ..\..\TestAutoIt.au3" -ForegroundColor Gray
+    $TestServerPath = "build\$BuildType\TestServer.exe"
+    if (Test-Path $TestServerPath) {
+        $ExeSize = (Get-Item $TestServerPath).Length / 1KB
+        Write-Host "  EXE: $TestServerPath ($([math]::Round($ExeSize, 0)) KB)" -ForegroundColor Gray
+    }
+
+    # Check maps.rar status
+    $OutputRar = "build\$BuildType\maps.rar"
+    if (Test-Path $OutputRar) {
+        $RarSize = (Get-Item $OutputRar).Length / 1MB
+        Write-Host "  RAR: $OutputRar ($([math]::Round($RarSize, 1)) MB)" -ForegroundColor Gray
+    } else {
+        Write-Host ""
+        Write-Host "  NOTE: maps.rar not found in output directory." -ForegroundColor Yellow
+        Write-Host "  Place maps.rar or maps/ folder next to GWPathfinder.dll" -ForegroundColor Yellow
+    }
+
+    if (Test-Path $TestServerPath) {
+        Write-Host ""
+        Write-Host "To test with DLL Tester:" -ForegroundColor Yellow
+        Write-Host "  cd build\$BuildType" -ForegroundColor Gray
+        Write-Host "  .\TestServer.exe" -ForegroundColor Gray
+        Write-Host "  Then open http://localhost:8080 in your browser" -ForegroundColor Gray
+    }
 } else {
     Write-Host "ERROR: DLL not created!" -ForegroundColor Red
     exit 1
