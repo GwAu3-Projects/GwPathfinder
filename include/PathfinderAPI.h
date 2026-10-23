@@ -66,6 +66,7 @@ extern "C" {
      */
     PATHFINDER_API PathResult* FindPathWithObstacles(
         int32_t map_id,
+        int32_t instance_type,
         float start_x,
         float start_y,
         int32_t start_layer,
@@ -91,7 +92,7 @@ extern "C" {
      * @param map_id GW map ID
      * @return int32_t 1 if available, 0 otherwise
      */
-    PATHFINDER_API int32_t IsMapAvailable(int32_t map_id);
+    PATHFINDER_API int32_t IsMapAvailable(int32_t map_id, int32_t instance_type);
 
     /**
      * @brief Returns the list of available map IDs
@@ -134,7 +135,7 @@ extern "C" {
      * @param file_path Path to the JSON file
      * @return int32_t 1 if success, 0 otherwise
      */
-    PATHFINDER_API int32_t LoadMapFromFile(int32_t map_id, const char* file_path);
+    PATHFINDER_API int32_t LoadMapFromFile(int32_t map_id, int32_t instance_type, const char* file_path);
 
     /**
      * @brief Loads a map from a JSON string in memory
@@ -144,7 +145,7 @@ extern "C" {
      * @param json_length Length of the JSON data in bytes
      * @return int32_t 1 if success, 0 otherwise
      */
-    PATHFINDER_API int32_t LoadMapFromJsonData(int32_t map_id, const char* json_data, int32_t json_length);
+    PATHFINDER_API int32_t LoadMapFromJsonData(int32_t map_id, int32_t instance_type, const char* json_data, int32_t json_length);
 
     /**
      * @brief Gets the statistics of a map
@@ -152,7 +153,7 @@ extern "C" {
      * @param map_id ID of the map
      * @return MapStats* Pointer to the stats (must be freed with FreeMapStats)
      */
-    PATHFINDER_API MapStats* GetMapStats(int32_t map_id);
+    PATHFINDER_API MapStats* GetMapStats(int32_t map_id, int32_t instance_type);
 
     /**
      * @brief Frees the memory allocated for the statistics

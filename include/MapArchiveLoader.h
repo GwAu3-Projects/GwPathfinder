@@ -9,6 +9,20 @@
 
 namespace Pathfinder {
 
+    // Composite key helpers: map_id * 10 + instance_type
+    // instance_type: 0 = Outpost, 1 = Explorable
+    inline int32_t MakeMapKey(int32_t map_id, int32_t instance_type) {
+        return map_id * 10 + instance_type;
+    }
+
+    inline int32_t MapKeyToMapId(int32_t key) {
+        return key / 10;
+    }
+
+    inline int32_t MapKeyToInstanceType(int32_t key) {
+        return key % 10;
+    }
+
     /**
      * @brief LRU cache manager for map data
      *

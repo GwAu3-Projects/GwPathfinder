@@ -9,6 +9,22 @@
 
 namespace Pathfinder {
 
+    // Parses instance type suffix from filename
+    // Returns 0 for Outpost, 1 for Explorable, -1 if not recognized
+    static int32_t ParseInstanceTypeSuffix(const std::string& filename) {
+        size_t json_pos = filename.rfind(".json");
+        if (json_pos == std::string::npos) return -1;
+
+        std::string name_part = filename.substr(0, json_pos);
+        size_t last_underscore = name_part.rfind('_');
+        if (last_underscore == std::string::npos) return -1;
+
+        std::string suffix = name_part.substr(last_underscore + 1);
+        if (suffix == "Outpost") return 0;
+        if (suffix == "Explorable") return 1;
+        return -1;
+    }
+
     // ==================== MapCache Implementation ====================
 
     MapCache::MapCache(size_t max_size)
@@ -166,7 +182,7 @@ namespace Pathfinder {
         m_cache->Clear();
     }
 
-    std::string MapArchiveLoader::FindAndReadMapFile(int32_t map_id) {
+    std::string MapArchiveLoader::FindAndReadMapFile(int32_t map_key) {
         std::lock_guard<std::mutex> lock(m_mutex);
 
         struct archive* a = archive_read_new();
@@ -179,8 +195,13 @@ namespace Pathfinder {
             return "";
         }
 
-        // Search for a file that starts with "map_id_"
-        std::string prefix = std::to_string(map_id) + "_";
+        // Decode composite key to map_id and instance type
+        int32_t raw_map_id = MapKeyToMapId(map_key);
+        int32_t target_inst_type = MapKeyToInstanceType(map_key);
+
+        std::string prefix = std::to_string(raw_map_id) + "_";
+        std::string expected_suffix = (target_inst_type == 0) ? "_Outpost.json" : "_Explorable.json";
+
         struct archive_entry* entry;
 
         while (archive_read_next_header(a, &entry) == ARCHIVE_OK) {
@@ -188,14 +209,15 @@ namespace Pathfinder {
             if (!name) continue;
 
             std::string fullpath(name);
-            // Strip directory prefix (e.g. "maps/" or "maps\")
             std::string filename = fullpath;
             size_t last_sep = fullpath.find_last_of("/\\");
             if (last_sep != std::string::npos) {
                 filename = fullpath.substr(last_sep + 1);
             }
-            // Check if the file starts with map_id and ends with .json
-            if (filename.find(prefix) == 0 && filename.find(".json") != std::string::npos) {
+            // Check prefix and suffix match
+            if (filename.find(prefix) == 0 && filename.find(".json") != std::string::npos &&
+                filename.size() >= expected_suffix.size() &&
+                filename.compare(filename.size() - expected_suffix.size(), expected_suffix.size(), expected_suffix) == 0) {
                 // File found, read it
                 int64_t size = archive_entry_size(entry);
                 std::string content;
@@ -256,13 +278,17 @@ namespace Pathfinder {
                 filename = fullpath.substr(last_sep + 1);
             }
             if (filename.find(".json") != std::string::npos) {
-                // Find the first underscore
                 size_t first_underscore = filename.find('_');
                 if (first_underscore != std::string::npos && first_underscore > 0) {
                     std::string id_str = filename.substr(0, first_underscore);
                     try {
                         int32_t map_id = std::stoi(id_str);
-                        m_available_maps.push_back(map_id);
+
+                        int32_t inst_type = ParseInstanceTypeSuffix(filename);
+                        if (inst_type < 0) inst_type = 0; // Legacy: default to Outpost
+
+                        int32_t map_key = MakeMapKey(map_id, inst_type);
+                        m_available_maps.push_back(map_key);
                     }
                     catch (...) {
                         // Ignore files with invalid names
@@ -297,8 +323,14 @@ namespace Pathfinder {
             std::string id_str = filename.substr(0, first_underscore);
             try {
                 int32_t map_id = std::stoi(id_str);
-                m_available_maps.push_back(map_id);
-                m_map_filenames[map_id] = entry.path().string();
+
+                // Parse instance type from suffix (e.g. "73_RiversideProvince_Outpost.json")
+                int32_t inst_type = ParseInstanceTypeSuffix(filename);
+                if (inst_type < 0) inst_type = 0; // Legacy: default to Outpost
+
+                int32_t map_key = MakeMapKey(map_id, inst_type);
+                m_available_maps.push_back(map_key);
+                m_map_filenames[map_key] = entry.path().string();
             }
             catch (...) {
                 // Ignore files with invalid names

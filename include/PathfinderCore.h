@@ -458,6 +458,9 @@ namespace Pathfinder {
         // Check if a position is a teleport entrance or exit
         bool IsTeleportPoint(const MapData& map_data, const Vec2f& pos) const;
 
+        // Insert exact teleporter enter/exit positions into path at layer changes
+        void InsertTeleporterPositions(const MapData& map_data, std::vector<PathPointWithLayer>& path) const;
+
         // Tag path points that are teleporter entrances with their tp_type
         void TagTeleporterPoints(const MapData& map_data, std::vector<PathPointWithLayer>& path) const;
 

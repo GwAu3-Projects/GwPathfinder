@@ -1,6 +1,7 @@
 #include "PathfinderAPI.h"
 #include "PathfinderCore.h"
 #include "MapDataRegistry.h"
+#include "MapArchiveLoader.h"
 #include <cstring>
 #include <memory>
 #include <fstream>
@@ -9,6 +10,24 @@
 // Global pathfinding engine instance
 static std::unique_ptr<Pathfinder::PathfinderEngine> g_engine;
 static bool g_initialized = false;
+
+// Helper: resolve instance_type = -1 by trying Outpost first, then Explorable
+static int32_t ResolveMapKey(int32_t map_id, int32_t instance_type) {
+    if (instance_type >= 0) {
+        return Pathfinder::MakeMapKey(map_id, instance_type);
+    }
+
+    // Auto-resolve: try Outpost (0), then Explorable (1)
+    auto& registry = Pathfinder::MapDataRegistry::GetInstance();
+
+    int32_t key_outpost = Pathfinder::MakeMapKey(map_id, 0);
+    if (registry.HasMap(key_outpost)) return key_outpost;
+
+    int32_t key_explorable = Pathfinder::MakeMapKey(map_id, 1);
+    if (registry.HasMap(key_explorable)) return key_explorable;
+
+    return -1;
+}
 
 extern "C" {
 
@@ -43,6 +62,7 @@ extern "C" {
 
     PATHFINDER_API PathResult* FindPathWithObstacles(
         int32_t map_id,
+        int32_t instance_type,
         float start_x,
         float start_y,
         int32_t start_layer,
@@ -75,21 +95,29 @@ extern "C" {
         result->error_message[0] = '\0';
 
         try {
+            // Resolve composite key from map_id + instance_type
+            int32_t map_key = ResolveMapKey(map_id, instance_type);
+            if (map_key < 0) {
+                result->error_code = 1;
+                std::snprintf(result->error_message, 255, "Map %d (instance_type=%d) not found", map_id, instance_type);
+                return result;
+            }
+
             // Check if the map is loaded, otherwise load it from the archive/directory
-            if (!g_engine->IsMapLoaded(map_id)) {
+            if (!g_engine->IsMapLoaded(map_key)) {
                 auto& registry = Pathfinder::MapDataRegistry::GetInstance();
-                std::string map_data = registry.GetMapData(map_id);
+                std::string map_data = registry.GetMapData(map_key);
 
                 if (map_data.empty()) {
                     result->error_code = 1;
-                    std::snprintf(result->error_message, 255, "Map %d not found in archive", map_id);
+                    std::snprintf(result->error_message, 255, "Map %d (instance_type=%d) not found in archive", map_id, instance_type);
                     return result;
                 }
 
                 // Load the map into the engine
-                if (!g_engine->LoadMapData(map_id, map_data)) {
+                if (!g_engine->LoadMapData(map_key, map_data)) {
                     result->error_code = 1;
-                    std::snprintf(result->error_message, 255, "Failed to load map %d", map_id);
+                    std::snprintf(result->error_message, 255, "Failed to load map %d (instance_type=%d)", map_id, instance_type);
                     return result;
                 }
             }
@@ -115,14 +143,12 @@ extern "C" {
             Pathfinder::Vec2f goal(dest_x, dest_y);
             float cost = 0.0f;
 
-            // Use pathfinding with obstacle avoidance (pass start_layer/dest_layer, -1 means auto-detect)
             std::vector<Pathfinder::PathPointWithLayer> path =
-                g_engine->FindPathWithObstacles(map_id, start, start_layer, goal, dest_layer, internal_obstacles, cost);
+                g_engine->FindPathWithObstacles(map_key, start, start_layer, goal, dest_layer, internal_obstacles, cost);
 
             if (path.empty()) {
                 result->error_code = 2;
-                // Add diagnostic info
-                auto stats = g_engine->GetMapDebugInfo(map_id, start, goal);
+                auto stats = g_engine->GetMapDebugInfo(map_key, start, goal);
                 std::snprintf(result->error_message, 255,
                     "No path found (pts=%d, visg=%d, traps=%d, startTrap=%s, goalTrap=%s)",
                     stats.point_count, stats.visgraph_size, stats.trap_count,
@@ -171,13 +197,13 @@ extern "C" {
         }
     }
 
-    PATHFINDER_API int32_t IsMapAvailable(int32_t map_id) {
+    PATHFINDER_API int32_t IsMapAvailable(int32_t map_id, int32_t instance_type) {
         if (!g_initialized) {
             Initialize();
         }
 
-        auto& registry = Pathfinder::MapDataRegistry::GetInstance();
-        return registry.HasMap(map_id) ? 1 : 0;
+        int32_t map_key = ResolveMapKey(map_id, instance_type);
+        return (map_key >= 0) ? 1 : 0;
     }
 
     PATHFINDER_API int32_t* GetAvailableMaps(int32_t* count) {
@@ -190,17 +216,16 @@ extern "C" {
         }
 
         try {
-            // Get the list of all available maps in the archive
             auto& registry = Pathfinder::MapDataRegistry::GetInstance();
-            std::vector<int32_t> map_ids = registry.GetAvailableMapIds();
-            *count = static_cast<int32_t>(map_ids.size());
+            std::vector<int32_t> map_keys = registry.GetAvailableMapIds();
+            *count = static_cast<int32_t>(map_keys.size());
 
-            if (map_ids.empty()) {
+            if (map_keys.empty()) {
                 return nullptr;
             }
 
-            int32_t* result = new int32_t[map_ids.size()];
-            std::memcpy(result, map_ids.data(), map_ids.size() * sizeof(int32_t));
+            int32_t* result = new int32_t[map_keys.size()];
+            std::memcpy(result, map_keys.data(), map_keys.size() * sizeof(int32_t));
 
             return result;
         }
@@ -217,11 +242,10 @@ extern "C" {
     }
 
     PATHFINDER_API const char* GetPathfinderVersion() {
-        return "GWPathfinder v1.0.0";
+        return "GWPathfinder v1.1.0";
     }
 
-    PATHFINDER_API int32_t LoadMapFromFile(int32_t map_id, const char* file_path) {
-        // Auto-initialize if necessary
+    PATHFINDER_API int32_t LoadMapFromFile(int32_t map_id, int32_t instance_type, const char* file_path) {
         if (!g_initialized) {
             if (!Initialize()) {
                 return 0;
@@ -233,19 +257,19 @@ extern "C" {
         }
 
         try {
-            // Open the JSON file
             std::ifstream file(file_path, std::ios::in | std::ios::binary);
             if (!file.is_open()) {
                 return 0;
             }
 
-            // Read all content
             std::stringstream buffer;
             buffer << file.rdbuf();
             std::string json_data = buffer.str();
 
-            // Load into the engine
-            if (g_engine->LoadMapData(map_id, json_data)) {
+            int32_t resolved_type = (instance_type < 0) ? 0 : instance_type;
+            int32_t map_key = Pathfinder::MakeMapKey(map_id, resolved_type);
+
+            if (g_engine->LoadMapData(map_key, json_data)) {
                 return 1;
             }
 
@@ -256,8 +280,7 @@ extern "C" {
         }
     }
 
-    PATHFINDER_API int32_t LoadMapFromJsonData(int32_t map_id, const char* json_data, int32_t json_length) {
-        // Auto-initialize if necessary
+    PATHFINDER_API int32_t LoadMapFromJsonData(int32_t map_id, int32_t instance_type, const char* json_data, int32_t json_length) {
         if (!g_initialized) {
             if (!Initialize()) {
                 return 0;
@@ -270,7 +293,11 @@ extern "C" {
 
         try {
             std::string data(json_data, static_cast<size_t>(json_length));
-            if (g_engine->LoadMapData(map_id, data)) {
+
+            int32_t resolved_type = (instance_type < 0) ? 0 : instance_type;
+            int32_t map_key = Pathfinder::MakeMapKey(map_id, resolved_type);
+
+            if (g_engine->LoadMapData(map_key, data)) {
                 return 1;
             }
             return 0;
@@ -280,8 +307,7 @@ extern "C" {
         }
     }
 
-    PATHFINDER_API MapStats* GetMapStats(int32_t map_id) {
-        // Auto-initialize if necessary
+    PATHFINDER_API MapStats* GetMapStats(int32_t map_id, int32_t instance_type) {
         if (!g_initialized) {
             Initialize();
         }
@@ -294,10 +320,17 @@ extern "C" {
             return result;
         }
 
-        Pathfinder::MapStatistics stats;
-        if (!g_engine->GetMapStatistics(map_id, stats)) {
+        int32_t map_key = ResolveMapKey(map_id, instance_type);
+        if (map_key < 0) {
             result->error_code = 2;
-            std::snprintf(result->error_message, sizeof(result->error_message), "Map %d not loaded", map_id);
+            std::snprintf(result->error_message, sizeof(result->error_message), "Map %d (instance_type=%d) not available", map_id, instance_type);
+            return result;
+        }
+
+        Pathfinder::MapStatistics stats;
+        if (!g_engine->GetMapStatistics(map_key, stats)) {
+            result->error_code = 2;
+            std::snprintf(result->error_message, sizeof(result->error_message), "Map %d (instance_type=%d) not loaded", map_id, instance_type);
             return result;
         }
 
@@ -328,12 +361,10 @@ extern "C" {
 BOOL APIENTRY DllMain(HMODULE /*hModule*/, DWORD ul_reason_for_call, LPVOID /*lpReserved*/) {
     switch (ul_reason_for_call) {
     case DLL_PROCESS_ATTACH:
-        // Automatic initialization on load
         Initialize();
         break;
 
     case DLL_PROCESS_DETACH:
-        // Automatic cleanup on unload
         Shutdown();
         break;
 

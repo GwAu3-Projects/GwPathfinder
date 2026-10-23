@@ -27,15 +27,15 @@ using json = nlohmann::json;
 // ========================================
 typedef int32_t     (*FnInitialize)();
 typedef void        (*FnShutdown)();
-typedef PathResult* (*FnFindPathWithObstacles)(int32_t, float, float, int32_t, float, float, int32_t, ObstacleZone*, int32_t, float, float);
+typedef PathResult* (*FnFindPathWithObstacles)(int32_t, int32_t, float, float, int32_t, float, float, int32_t, ObstacleZone*, int32_t, float, float);
 typedef void        (*FnFreePathResult)(PathResult*);
-typedef int32_t     (*FnIsMapAvailable)(int32_t);
+typedef int32_t     (*FnIsMapAvailable)(int32_t, int32_t);
 typedef int32_t*    (*FnGetAvailableMaps)(int32_t*);
 typedef void        (*FnFreeMapList)(int32_t*);
 typedef const char* (*FnGetPathfinderVersion)();
-typedef int32_t     (*FnLoadMapFromFile)(int32_t, const char*);
-typedef int32_t     (*FnLoadMapFromJsonData)(int32_t, const char*, int32_t);
-typedef MapStats*   (*FnGetMapStats)(int32_t);
+typedef int32_t     (*FnLoadMapFromFile)(int32_t, int32_t, const char*);
+typedef int32_t     (*FnLoadMapFromJsonData)(int32_t, int32_t, const char*, int32_t);
+typedef MapStats*   (*FnGetMapStats)(int32_t, int32_t);
 typedef void        (*FnFreeMapStats)(MapStats*);
 
 // ========================================
@@ -273,7 +273,7 @@ int main(int argc, char* argv[]) {
             return;
         }
 
-        MapStats* stats = g_GetMapStats(map_id);
+        MapStats* stats = g_GetMapStats(map_id, -1);
         if (!stats) {
             j["error_code"] = -1;
             j["error_message"] = "Failed to get stats";
@@ -306,7 +306,7 @@ int main(int argc, char* argv[]) {
 
         json j;
         j["map_id"] = map_id;
-        j["available"] = g_IsMapAvailable ? (g_IsMapAvailable(map_id) != 0) : false;
+        j["available"] = g_IsMapAvailable ? (g_IsMapAvailable(map_id, -1) != 0) : false;
         res.set_content(j.dump(), "application/json");
     });
 
@@ -320,6 +320,7 @@ int main(int argc, char* argv[]) {
             json j_req = json::parse(req.body);
 
             int32_t map_id = j_req.value("map_id", 0);
+            int32_t instance_type = j_req.value("instance_type", -1);
             float start_x = j_req.value("start_x", 0.0f);
             float start_y = j_req.value("start_y", 0.0f);
             int32_t start_layer = j_req.value("start_layer", -1);
@@ -354,7 +355,7 @@ int main(int argc, char* argv[]) {
             auto t_start = std::chrono::high_resolution_clock::now();
 
             PathResult* result = g_FindPathWithObstacles(
-                map_id, start_x, start_y, start_layer,
+                map_id, instance_type, start_x, start_y, start_layer,
                 dest_x, dest_y, dest_layer,
                 obstacles.empty() ? nullptr : obstacles.data(),
                 static_cast<int32_t>(obstacles.size()),
@@ -438,7 +439,7 @@ int main(int argc, char* argv[]) {
             }
 
             std::lock_guard<std::mutex> lock(g_dll_mutex);
-            int32_t ok = g_LoadMapFromFile(map_id, file_path.c_str());
+            int32_t ok = g_LoadMapFromFile(map_id, -1, file_path.c_str());
 
             j["success"] = (ok != 0);
             j["map_id"] = map_id;
@@ -480,7 +481,7 @@ int main(int argc, char* argv[]) {
         std::lock_guard<std::mutex> lock(g_dll_mutex);
 
         auto t_start = std::chrono::high_resolution_clock::now();
-        int32_t ok = g_LoadMapFromJsonData(map_id, req.body.c_str(), static_cast<int32_t>(req.body.size()));
+        int32_t ok = g_LoadMapFromJsonData(map_id, -1, req.body.c_str(), static_cast<int32_t>(req.body.size()));
         auto t_end = std::chrono::high_resolution_clock::now();
         double load_ms = std::chrono::duration<double, std::milli>(t_end - t_start).count();
 

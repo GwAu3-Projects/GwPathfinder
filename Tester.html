@@ -789,11 +789,19 @@
         // Helper Functions
         // ========================================
 
-        // Extract map ID from filename (e.g., "6_Core_BattleIsles_Kryta_WizardsIsle_ExplorableZone.json" -> 6)
+        // Extract map ID from filename (e.g., "6_WizardsIsle_Explorable.json" -> 6)
         function getCurrentMapId() {
             if (!state.currentFileName) return 0;
             const match = state.currentFileName.match(/^(\d+)_/);
             return match ? parseInt(match[1]) : 0;
+        }
+
+        // Extract instance type from filename suffix (0=Outpost, 1=Explorable, -1=unknown)
+        function getCurrentInstanceType() {
+            if (!state.currentFileName) return -1;
+            if (state.currentFileName.endsWith('_Outpost.json')) return 0;
+            if (state.currentFileName.endsWith('_Explorable.json')) return 1;
+            return -1;
         }
 
         // Find or create a point at the given position
@@ -3664,6 +3672,51 @@
             return false;
         }
 
+        function insertTeleporterPositions(path) {
+            if (!path || path.length < 2 || !state.data.teleports || state.data.teleports.length === 0) return path;
+
+            const newPath = [path[0]];
+            for (let i = 1; i < path.length; i++) {
+                if (path[i-1].layer !== path[i].layer) {
+                    let bestTp = null, bestForward = true, bestDist = Infinity;
+
+                    for (const tp of state.data.teleports) {
+                        const eX = tp[0], eY = tp[1], eLayer = tp.length >= 9 ? tp[3] : tp[2];
+                        const xX = tp.length >= 9 ? tp[4] : tp[3], xY = tp.length >= 9 ? tp[5] : tp[4];
+                        const xLayer = tp.length >= 9 ? tp[7] : tp[5];
+                        const dir = tp.length >= 9 ? tp[8] : (tp[6] || 0);
+
+                        if (eLayer === path[i-1].layer && xLayer === path[i].layer) {
+                            const d = Math.hypot(path[i-1].x - eX, path[i-1].y - eY) + Math.hypot(path[i].x - xX, path[i].y - xY);
+                            if (d < bestDist) { bestDist = d; bestTp = tp; bestForward = true; }
+                        }
+                        if ((dir === 1 || dir === 2) && xLayer === path[i-1].layer && eLayer === path[i].layer) {
+                            const d = Math.hypot(path[i-1].x - xX, path[i-1].y - xY) + Math.hypot(path[i].x - eX, path[i].y - eY);
+                            if (d < bestDist) { bestDist = d; bestTp = tp; bestForward = false; }
+                        }
+                    }
+
+                    if (bestTp) {
+                        const eX = bestTp[0], eY = bestTp[1];
+                        const eLayer = bestTp.length >= 9 ? bestTp[3] : bestTp[2];
+                        const xX = bestTp.length >= 9 ? bestTp[4] : bestTp[3];
+                        const xY = bestTp.length >= 9 ? bestTp[5] : bestTp[4];
+                        const xLayer = bestTp.length >= 9 ? bestTp[7] : bestTp[5];
+
+                        if (bestForward) {
+                            newPath.push({ x: eX, y: eY, z: 0, layer: eLayer });
+                            newPath.push({ x: xX, y: xY, z: 0, layer: xLayer });
+                        } else {
+                            newPath.push({ x: xX, y: xY, z: 0, layer: xLayer });
+                            newPath.push({ x: eX, y: eY, z: 0, layer: eLayer });
+                        }
+                    }
+                }
+                newPath.push(path[i]);
+            }
+            return newPath;
+        }
+
         function simplifyPath(path, minSpacing) {
             if (!path || path.length <= 2) return path;
 
@@ -3737,8 +3790,8 @@
                         const endTime = performance.now();
 
                         if (path && path.length > 0) {
-                            state.computedPath = path;
-                            state.simplifiedPath = simplifyPath(path, state.pathSpacing);
+                            state.computedPath = insertTeleporterPositions(path);
+                            state.simplifiedPath = simplifyPath(state.computedPath, state.pathSpacing);
 
                             let totalCost = 0;
                             for (let i = 1; i < path.length; i++) {
@@ -5145,6 +5198,7 @@
 
             const body = {
                 map_id: mapId,
+                instance_type: getCurrentInstanceType(),
                 start_x: startPos.x,
                 start_y: startPos.y,
                 start_layer: -1,

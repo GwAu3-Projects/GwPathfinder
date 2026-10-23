@@ -442,6 +442,9 @@ namespace Pathfinder {
                 out_cost += path[i - 1].pos.Distance(path[i].pos);
             }
 
+            // Insert exact teleporter enter/exit positions at layer changes
+            InsertTeleporterPositions(map_data, path);
+
             // Tag teleporter enter points in the path
             // tp_type: 0=normal, 1=one-way TP, 2=two-way TP, 3=switch TP
             TagTeleporterPoints(map_data, path);
@@ -1005,6 +1008,58 @@ namespace Pathfinder {
             }
         }
         return false;
+    }
+
+    void PathfinderEngine::InsertTeleporterPositions(const MapData& map_data, std::vector<PathPointWithLayer>& path) const {
+        if (map_data.teleporters.empty() || path.size() < 2) return;
+
+        std::vector<PathPointWithLayer> new_path;
+        new_path.reserve(path.size() + map_data.teleporters.size() * 2);
+        new_path.push_back(path[0]);
+
+        for (size_t i = 1; i < path.size(); ++i) {
+            if (path[i - 1].layer != path[i].layer) {
+                // Layer change detected - find the teleporter responsible
+                const Teleporter* best_tp = nullptr;
+                bool best_forward = true;
+                float best_dist = std::numeric_limits<float>::infinity();
+
+                for (const auto& tp : map_data.teleporters) {
+                    // Forward: enter(prev_layer) -> exit(next_layer)
+                    if (tp.enter_layer == path[i - 1].layer && tp.exit_layer == path[i].layer) {
+                        float dist = path[i - 1].pos.Distance(tp.enter) + path[i].pos.Distance(tp.exit);
+                        if (dist < best_dist) {
+                            best_dist = dist;
+                            best_tp = &tp;
+                            best_forward = true;
+                        }
+                    }
+                    // Reverse: exit(prev_layer) -> enter(next_layer) for two-way TPs
+                    if ((tp.direction == 1 || tp.direction == 2) &&
+                        tp.exit_layer == path[i - 1].layer && tp.enter_layer == path[i].layer) {
+                        float dist = path[i - 1].pos.Distance(tp.exit) + path[i].pos.Distance(tp.enter);
+                        if (dist < best_dist) {
+                            best_dist = dist;
+                            best_tp = &tp;
+                            best_forward = false;
+                        }
+                    }
+                }
+
+                if (best_tp) {
+                    if (best_forward) {
+                        new_path.emplace_back(best_tp->enter, best_tp->enter_layer);
+                        new_path.emplace_back(best_tp->exit, best_tp->exit_layer);
+                    } else {
+                        new_path.emplace_back(best_tp->exit, best_tp->exit_layer);
+                        new_path.emplace_back(best_tp->enter, best_tp->enter_layer);
+                    }
+                }
+            }
+            new_path.push_back(path[i]);
+        }
+
+        path = std::move(new_path);
     }
 
     void PathfinderEngine::TagTeleporterPoints(const MapData& map_data, std::vector<PathPointWithLayer>& path) const {

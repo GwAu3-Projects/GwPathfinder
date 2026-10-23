@@ -33,6 +33,11 @@ namespace Pathfinder {
             return false;
         }
 
+        // Debug: load maps from desktop folder for easier iteration
+        if (MapArchiveLoader::GetInstance().InitializeFromDirectory("C:\\Users\\grego\\OneDrive\\Bureau\\maps")) {
+            return true;
+        }
+
         // Try maps.rar
         std::string rar_path = dir + "\\maps.rar";
         if (MapArchiveLoader::GetInstance().Initialize(rar_path)) {
